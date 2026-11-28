@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdlib>
 
+
 inline constexpr int DEFAULT_CAPACITY = 16;
 inline constexpr float EXTENSION_FACTOR = 1.6f;
 
@@ -93,7 +94,8 @@ class Array final {
             this->data = static_cast<T*>(std::malloc(other.capacity * sizeof(T)));
 
             for (int i = 0; i < other.count; i++) {
-                this->data[i] = *(new (this->data + i) T(other.data[i]));
+                // fixed TODO: suspicious operation, possible copy invocation
+                *(new (this->data + i) T(other.data[i]));
             }
         }
 
@@ -120,21 +122,8 @@ class Array final {
         }
 
         Array& operator=(const Array& other) {
-            if (this == &other) {
-                return *this;
-            }
-
-            for (int i = 0; i < this->count; i++) {
-                this->data[i].~T();
-            }
-
-            std::free(this->data);
-            this->count = other.count;
-            this->capacity = other.capacity;
-            for (int i = 0; i < other.count; i++) {
-                this->data[i] = new (this->data[i]) T(other.data[i]);
-            }
-
+            Array copy{other};
+            this->swap(copy);
             return *this;
         }
 
@@ -160,6 +149,12 @@ class Array final {
             return *this;
         }
 
+        void swap(Array& other) noexcept {
+            std::swap(this->capacity, other.capacity);
+            std::swap(this->count, other.count);
+            std::swap(this->data, other.data);
+        }
+
         int insert(const T& value) {
             return this->insert(this->count, value);
         }
@@ -171,9 +166,9 @@ class Array final {
 
             for (int i = this->count; i > index; --i) {
                 if constexpr (std::is_move_constructible_v<T> && std::is_move_assignable_v<T>) {
-                    this->data[i] = *(new (this->data + i) T(std::move(*(this->data + i - 1))));
+                    *(new (this->data + i) T(std::move(*(this->data + i - 1))));
                 } else {
-                    this->data[i] = *(new (this->data[i - 1]) T(data[i - 1]));
+                    *(new (this->data[i - 1]) T(data[i - 1]));
                     *(this->data + i - 1).~T();
                 }
             }
@@ -185,13 +180,22 @@ class Array final {
 
         void remove(const int index) {
             for (int i = index; i < this->count - 1; ++i) {
-                if constexpr (std::is_move_constructible_v<T> && std::is_move_assignable_v<T>) {
-                    this->data[i] = *(new (this->data + i) T(std::move(*(this->data + i + 1))));
+                (*(this->data + i)).~T();
+                if constexpr (
+                        std::is_move_constructible_v<T>
+                    /*&&  std::is_move_assignable_v<T>*/) {
+                    *(new (this->data + i) T(std::move(*(this->data + i + 1))));
                 } else {
-                    this->data[i] = *(new (this->data[i - 1]) T(data[i + 1]));
-                    *(this->data + i + 1).~T();
+
+                    *(new (this->data + i) T(data[i + 1])); //
+                    // TODO: desctructor of the previous, desctructors are called differently
+                    // *(new (this->data[i - 1]) T(data[i + 1]));
+                    // *(this->data + i + 1).~T();
                 }
             }
+
+            // don't forget the last element
+            (*(this->data + this->count - 1)).~T();
             --this->count;
         }
 
@@ -233,12 +237,16 @@ class Array final {
             T* new_data = static_cast<T*>(std::malloc(new_capacity * sizeof(T)));
 
             for (int i = 0; i < this->count; i++) {
-                if constexpr (std::is_move_constructible_v<T> && std::is_move_assignable_v<T>) {
-                    new_data[i] = *(new (new_data + i) T(std::move(*(this->data + i))));
+                if constexpr (std::is_move_constructible_v<T>/* && std::is_move_assignable_v<T>*/) {
+                    *(new (new_data + i) T(std::move(*(this->data + i))));
                 } else {
-                    new_data[i] = *(new (new_data[i]) T(data[i]));
-                    data[i].~T();
+                    // TODO: missed destructors
+                    *(new (new_data + i) T(data[i])); // if we fail to copy in the middle, array is half-destroyed, which is bulls***
                 }
+            }
+
+            for (int i = 0; i < this->count; i++) {
+                (*(this->data + i)).~T();
             }
 
             std::free(this->data);
